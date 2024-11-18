@@ -1,5 +1,5 @@
 #!/usr/bin/env python3.12
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import httpx
 from fastapi import FastAPI, Request, HTTPException
@@ -15,7 +15,11 @@ from datetime import timezone
 # Configuration using environment variables
 @dataclass
 class Config:
-    MATTERMOST_TOKEN: str = os.environ.get('MATTERMOST_TOKEN', '')
+    MATTERMOST_TOKENS: list[str] = field(default_factory=lambda: [
+        token.strip()
+        for token in os.environ.get('MATTERMOST_TOKENS', '').split(',')
+        if token.strip()
+    ])
     ALERTMANAGER_URL: str = os.environ.get('ALERTMANAGER_URL', 'http://alertmanager:9093')
     HOST: str = os.environ.get('HOST', '0.0.0.0')
     PORT: int = int(os.environ.get('PORT', '7788'))
@@ -76,7 +80,7 @@ async def create_silence(matcher: str, duration: timedelta, comment: str, userna
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            f"{Config.ALERTMANAGER_URL}/api/v2/silences",
+            f"{config.ALERTMANAGER_URL}/api/v2/silences",
             json=silence_data
         )
         response.raise_for_status()
@@ -92,7 +96,11 @@ async def handle_silence_command(request: Request):
     command = MattermostCommand(**form_data)
 
     # Verify token
-    if command.token != Config.MATTERMOST_TOKEN:
+    if not config.MATTERMOST_TOKENS:
+        logger.error("No Mattermost tokens configured")
+        raise HTTPException(status_code=500, detail="No Mattermost tokens configured")
+    if command.token not in config.MATTERMOST_TOKENS:
+        logger.warning(f"Invalid token received from user: {command.user_name}")
         raise HTTPException(status_code=401, detail="Invalid token")
 
     # Verify user if ALLOWED_USERS is set
